@@ -26,7 +26,7 @@ sequenceDiagram
 
     Note over Developer,pgAdmin: Task Flow: POST /interactions → Verify in Database
 
-    Developer->>Browser: Open Swagger UI<br/>http://vm-ip:caddy-port/docs
+    Developer->>Browser: Open Swagger UI<br/>http://<your-vm-ip-address>:<caddy-port>/docs
     Browser->>Caddy: GET /docs
     Caddy-->>Browser: Swagger UI HTML/JS
 
@@ -48,7 +48,7 @@ sequenceDiagram
 
     Note over Developer,pgAdmin: Verification Flow: Check database in pgAdmin
 
-    Developer->>pgAdmin: Open pgAdmin<br/>http://vm-ip:pgadmin-port
+    Developer->>pgAdmin: Open pgAdmin<br/>http://<your-vm-ip-address>:<pgadmin-port>
     Developer->>pgAdmin: Run SQL query:<br/>SELECT * FROM interacts<br/>ORDER BY id DESC LIMIT 5
     pgAdmin->>DB: Execute SQL query
     DB-->>pgAdmin: Return rows of 'interacts'
