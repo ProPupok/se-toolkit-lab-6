@@ -89,22 +89,54 @@ def load_env_file(env_path: Path) -> dict[str, str]:
     return env_vars
 
 
+def is_placeholder_value(value: str) -> bool:
+    """Check if a value is a placeholder that should be ignored."""
+    if not value:
+        return True
+    placeholders = [
+        "your-llm-api-key-here",
+        "your-vm-ip",
+        "your-qwen-api-port",
+        "your-api-key",
+        "<your-vm-ip>",
+        "<your-qwen-api-port>",
+        "<vm-ip>",
+        "<port>",
+        "your-llm-api-key-here",
+    ]
+    value_lower = value.lower().strip()
+    return any(ph in value_lower for ph in placeholders)
+
+
 def get_llm_config() -> dict[str, str]:
-    """Load LLM configuration from environment or .env.agent.secret."""
+    """Load LLM configuration from environment or .env.agent.secret.
+    
+    Environment variables always take precedence over .env file values.
+    Placeholder values in .env file are ignored.
+    """
     env_vars = load_env_file(ENV_AGENT_FILE)
 
-    api_key = os.environ.get("LLM_API_KEY") or env_vars.get("LLM_API_KEY")
-    api_base = os.environ.get("LLM_API_BASE") or env_vars.get("LLM_API_BASE")
-    model = os.environ.get("LLM_MODEL") or env_vars.get("LLM_MODEL")
+    # Environment variables take precedence
+    api_key = os.environ.get("LLM_API_KEY")
+    api_base = os.environ.get("LLM_API_BASE")
+    model = os.environ.get("LLM_MODEL")
 
-    if not api_key:
-        print("Error: LLM_API_KEY not set. Please configure .env.agent.secret", file=sys.stderr)
+    # Fall back to .env file only if env vars not set or are placeholders
+    if not api_key or is_placeholder_value(api_key):
+        api_key = env_vars.get("LLM_API_KEY", "")
+    if not api_base or is_placeholder_value(api_base):
+        api_base = env_vars.get("LLM_API_BASE", "")
+    if not model or is_placeholder_value(model):
+        model = env_vars.get("LLM_MODEL", "")
+
+    if not api_key or is_placeholder_value(api_key):
+        print("Error: LLM_API_KEY not set or is a placeholder. Please configure .env.agent.secret or set environment variable.", file=sys.stderr)
         sys.exit(1)
-    if not api_base:
-        print("Error: LLM_API_BASE not set. Please configure .env.agent.secret", file=sys.stderr)
+    if not api_base or is_placeholder_value(api_base):
+        print("Error: LLM_API_BASE not set or is a placeholder. Please configure .env.agent.secret or set environment variable.", file=sys.stderr)
         sys.exit(1)
-    if not model:
-        print("Error: LLM_MODEL not set. Please configure .env.agent.secret", file=sys.stderr)
+    if not model or is_placeholder_value(model):
+        print("Error: LLM_MODEL not set or is a placeholder. Please configure .env.agent.secret or set environment variable.", file=sys.stderr)
         sys.exit(1)
 
     return {
@@ -115,17 +147,25 @@ def get_llm_config() -> dict[str, str]:
 
 
 def get_backend_config() -> dict[str, str]:
-    """Load backend configuration from environment or .env.docker.secret."""
+    """Load backend configuration from environment or .env.docker.secret.
+    
+    Environment variables always take precedence over .env file values.
+    Placeholder values in .env file are ignored.
+    """
     env_vars = load_env_file(ENV_DOCKER_FILE)
 
-    lms_api_key = os.environ.get("LMS_API_KEY") or env_vars.get("LMS_API_KEY")
-    agent_api_base = os.environ.get(
-        "AGENT_API_BASE_URL",
-        env_vars.get("AGENT_API_BASE_URL", "http://localhost:42002")
-    )
+    # Environment variables take precedence
+    lms_api_key = os.environ.get("LMS_API_KEY")
+    agent_api_base = os.environ.get("AGENT_API_BASE_URL")
 
-    if not lms_api_key:
-        print("Error: LMS_API_KEY not set. Please configure .env.docker.secret", file=sys.stderr)
+    # Fall back to .env file only if env vars not set or are placeholders
+    if not lms_api_key or is_placeholder_value(lms_api_key):
+        lms_api_key = env_vars.get("LMS_API_KEY", "")
+    if not agent_api_base or is_placeholder_value(agent_api_base):
+        agent_api_base = env_vars.get("AGENT_API_BASE_URL", "http://localhost:42002")
+
+    if not lms_api_key or is_placeholder_value(lms_api_key):
+        print("Error: LMS_API_KEY not set or is a placeholder. Please configure .env.docker.secret or set environment variable.", file=sys.stderr)
         sys.exit(1)
 
     return {
