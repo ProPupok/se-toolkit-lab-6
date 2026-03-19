@@ -2,6 +2,9 @@ services:
   app:
     build: .
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - ${APP_HOST_ADDRESS:?'APP_HOST_ADDRESS is required'}:${APP_HOST_PORT:?'APP_HOST_PORT is required'}:${APP_CONTAINER_PORT}
     expose:
@@ -35,6 +38,9 @@ services:
     # This solution may not work outside of the University network.
     image: harbor.pg.innopolis.university/docker-hub-cache/postgres:18.3-alpine
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       - POSTGRES_DB=${POSTGRES_DB:?'POSTGRES_DB is required'}
       - POSTGRES_USER=${POSTGRES_USER:?'POSTGRES_USER is required'}
@@ -71,6 +77,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   caddy:
     build: frontend/
@@ -83,6 +92,10 @@ services:
       - ${CADDY_HOST_ADDRESS:?'CADDY_HOST_ADDRESS is required'}:${CADDY_HOST_PORT:?'CADDY_HOST_PORT is required'}:${CADDY_CONTAINER_PORT}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
 volumes:
   postgres_data:
+
