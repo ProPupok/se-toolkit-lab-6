@@ -112,7 +112,7 @@ def get_llm_config() -> dict[str, str]:
 
     Environment variables always take precedence over .env file values.
     Placeholder values in .env file are ignored.
-    Default LLM_API_BASE: http://10.93.25.11:42002/v1
+    Default LLM_API_BASE: http://10.93.25.11:8080/v1
     """
     env_vars = load_env_file(ENV_AGENT_FILE)
 
@@ -125,7 +125,7 @@ def get_llm_config() -> dict[str, str]:
     if not api_key or is_placeholder_value(api_key):
         api_key = env_vars.get("LLM_API_KEY", "")
     if not api_base or is_placeholder_value(api_base):
-        api_base = env_vars.get("LLM_API_BASE", "http://10.93.25.11:42002/v1")
+        api_base = env_vars.get("LLM_API_BASE", "http://10.93.25.11:8080/v1")
     if not model or is_placeholder_value(model):
         model = env_vars.get("LLM_MODEL", "")
 
