@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Lab Assistant Agent — Task 2: The Documentation Agent
+Lab Assistant Agent — Task 3: The System Agent
 
-A CLI agent that uses tools (read_file, list_files) to navigate the project wiki
-and answer questions based on documentation.
+A CLI agent that uses tools (read_file, list_files, query_api) to:
+- Navigate the project wiki
+- Read source code
+- Query the deployed backend API
 
 Usage:
-    uv run agent.py "How do you resolve a merge conflict?"
+    uv run agent.py "How many items are in the database?"
 
 Output:
     {
       "answer": "...",
-      "source": "wiki/git-workflow.md#resolving-merge-conflicts",
+      "source": "...",
       "tool_calls": [...]
     }
 """
@@ -22,34 +24,55 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
-# Environment file path (relative to project root)
-ENV_FILE = Path(__file__).parent / ".env.agent.secret"
+# Project root directory
+PROJECT_ROOT = Path(__file__).parent.resolve()
+
+# Environment file paths
+ENV_AGENT_FILE = PROJECT_ROOT / ".env.agent.secret"
+ENV_DOCKER_FILE = PROJECT_ROOT / ".env.docker.secret"
 
 # Maximum tool call iterations
-MAX_ITERATIONS = 10
+MAX_ITERATIONS = 15
 
-# System prompt for the documentation agent
-SYSTEM_PROMPT = """You are a documentation assistant. You have access to two tools:
+# System prompt for the system agent
+SYSTEM_PROMPT = """You are a documentation and system assistant for a Learning Management Service project. You have access to three tools:
 
 1. list_files - List files and directories at a given path
 2. read_file - Read the contents of a file
+3. query_api - Call the deployed backend API to get real-time data
 
-When answering questions about the project:
-1. First explore the wiki structure with list_files (start with "wiki" directory)
-2. Read relevant files with read_file to find the answer
-3. Always include a source reference in your answer (e.g., wiki/git-workflow.md#section-name)
-4. Be concise and accurate
+Tool selection guidelines:
+- Use list_files/read_file for:
+  - Wiki documentation questions (explore wiki/ directory)
+  - Source code analysis (backend/, frontend/, docker-compose.yml, etc.)
+  - Configuration file questions (.env files, pyproject.toml, Dockerfile)
+  
+- Use query_api for:
+  - Real-time data queries (item count, learner scores, analytics)
+  - HTTP status code questions
+  - API endpoint behavior testing
+  - Error diagnosis from live API
 
-The wiki is in the 'wiki/' directory relative to the project root.
-When you find the answer, respond with a text message (no tool calls) that includes:
-- The answer to the question
-- A source reference (file path + section anchor if applicable)
+When answering questions:
+1. First determine which tool(s) to use based on the question type
+2. For wiki questions: start with list_files("wiki"), then read_file
+3. For source code questions: use read_file directly on the relevant file
+4. For API questions: use query_api with appropriate method and path
+5. Always include a source reference in your answer:
+   - For wiki: wiki/filename.md or wiki/filename.md#section-name
+   - For source code: path/to/file.py
+   - For API: METHOD /endpoint/path
+6. Be concise and accurate
 
-Do not make up information. Only answer based on what you find in the wiki files."""
+Important:
+- The wiki is in the 'wiki/' directory
+- The backend code is in 'backend/' directory
+- The API base URL is configured via environment variables
+- Do not make up information - only answer based on what you find"""
 
 
 def load_env_file(env_path: Path) -> dict[str, str]:
@@ -62,13 +85,13 @@ def load_env_file(env_path: Path) -> dict[str, str]:
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, _, value = line.partition("=")
-                env_vars[key.strip()] = value.strip()
+                env_vars[key.strip()] = value.strip().strip('"').strip("'")
     return env_vars
 
 
 def get_llm_config() -> dict[str, str]:
     """Load LLM configuration from environment or .env.agent.secret."""
-    env_vars = load_env_file(ENV_FILE)
+    env_vars = load_env_file(ENV_AGENT_FILE)
 
     api_key = os.environ.get("LLM_API_KEY") or env_vars.get("LLM_API_KEY")
     api_base = os.environ.get("LLM_API_BASE") or env_vars.get("LLM_API_BASE")
@@ -91,23 +114,43 @@ def get_llm_config() -> dict[str, str]:
     }
 
 
+def get_backend_config() -> dict[str, str]:
+    """Load backend configuration from environment or .env.docker.secret."""
+    env_vars = load_env_file(ENV_DOCKER_FILE)
+
+    lms_api_key = os.environ.get("LMS_API_KEY") or env_vars.get("LMS_API_KEY")
+    agent_api_base = os.environ.get(
+        "AGENT_API_BASE_URL",
+        env_vars.get("AGENT_API_BASE_URL", "http://localhost:42002")
+    )
+
+    if not lms_api_key:
+        print("Error: LMS_API_KEY not set. Please configure .env.docker.secret", file=sys.stderr)
+        sys.exit(1)
+
+    return {
+        "api_key": lms_api_key,
+        "api_base": agent_api_base.rstrip("/"),
+    }
+
+
 def resolve_path(relative_path: str) -> Path:
     """
     Resolve a relative path and ensure it's within the project directory.
     
     Security: Prevents path traversal attacks (../ outside project root).
     """
-    project_root = Path(__file__).parent.resolve()
-    
-    # Handle empty path
     if not relative_path:
         relative_path = "."
     
+    # Clean the path
+    relative_path = relative_path.lstrip("/")
+    
     # Construct full path
-    full_path = (project_root / relative_path).resolve()
+    full_path = (PROJECT_ROOT / relative_path).resolve()
     
     # Check for path traversal
-    if not str(full_path).startswith(str(project_root)):
+    if not str(full_path).startswith(str(PROJECT_ROOT)):
         raise SecurityError(f"Path traversal detected: {relative_path}")
     
     return full_path
@@ -138,7 +181,14 @@ def tool_read_file(path: str) -> str:
             return f"Error: Not a file: {path}"
         
         with open(full_path, "r", encoding="utf-8") as f:
-            return f.read()
+            content = f.read()
+        
+        # Truncate very large files
+        max_length = 10000
+        if len(content) > max_length:
+            content = content[:max_length] + "\n... [truncated]"
+        
+        return content
             
     except SecurityError as e:
         return f"Security error: {e}"
@@ -170,7 +220,7 @@ def tool_list_files(path: str) -> str:
             # Skip hidden files and common ignored directories
             if entry.name.startswith(".") and entry.name not in [".github", ".vscode"]:
                 continue
-            if entry.name in ["__pycache__", ".venv", ".git", "node_modules"]:
+            if entry.name in ["__pycache__", ".venv", ".git", "node_modules", ".qwen"]:
                 continue
                 
             suffix = "/" if entry.is_dir() else ""
@@ -184,19 +234,81 @@ def tool_list_files(path: str) -> str:
         return f"Error listing files: {e}"
 
 
+def tool_query_api(method: str, path: str, body: Optional[str] = None) -> str:
+    """
+    Call the deployed backend API.
+    
+    Args:
+        method: HTTP method (GET, POST, PUT, DELETE)
+        path: API endpoint path (e.g., /items/, /analytics/completion-rate)
+        body: Optional JSON request body for POST/PUT requests
+        
+    Returns:
+        JSON string with status_code and response body, or error message
+    """
+    try:
+        backend_config = get_backend_config()
+        url = f"{backend_config['api_base']}{path}"
+        
+        headers = {
+            "Authorization": f"Bearer {backend_config['api_key']}",
+            "Content-Type": "application/json",
+        }
+        
+        print(f"Querying API: {method} {url}", file=sys.stderr)
+        
+        # Prepare request
+        kwargs = {"headers": headers, "timeout": 30.0}
+        
+        if body:
+            try:
+                kwargs["json"] = json.loads(body)
+            except json.JSONDecodeError:
+                return f"Error: Invalid JSON body: {body}"
+        
+        # Make request
+        with httpx.Client() as client:
+            response = client.request(method.upper(), url, **kwargs)
+        
+        # Format response
+        result = {
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": response.text,
+        }
+        
+        try:
+            result["json"] = response.json()
+        except:
+            pass
+        
+        return json.dumps(result, indent=2)
+        
+    except httpx.HTTPStatusError as e:
+        return json.dumps({
+            "status_code": e.response.status_code if e.response else "N/A",
+            "error": str(e),
+            "body": e.response.text if e.response else "",
+        }, indent=2)
+    except httpx.RequestError as e:
+        return f"Error: Cannot connect to API at {url}: {e}"
+    except Exception as e:
+        return f"Error querying API: {e}"
+
+
 # Tool definitions for OpenAI function calling
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a file from the project repository",
+            "description": "Read a file from the project repository. Use for wiki documentation, source code, and configuration files.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path from project root"
+                        "description": "Relative path from project root (e.g., 'wiki/git-workflow.md', 'backend/app/main.py')"
                     }
                 },
                 "required": ["path"]
@@ -207,16 +319,42 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files and directories at a given path",
+            "description": "List files and directories at a given path. Use to explore directory structure.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative directory path from project root"
+                        "description": "Relative directory path from project root (e.g., 'wiki', 'backend/app')"
                     }
                 },
                 "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_api",
+            "description": "Call the deployed backend API to get real-time data, test endpoints, or check HTTP status codes. Use for questions about database content, API behavior, or error responses.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method (GET, POST, PUT, DELETE)",
+                        "enum": ["GET", "POST", "PUT", "DELETE"]
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "API endpoint path (e.g., '/items/', '/analytics/completion-rate', '/items/1')"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional JSON request body for POST/PUT requests"
+                    }
+                },
+                "required": ["method", "path"]
             }
         }
     }
@@ -226,6 +364,7 @@ TOOLS = [
 TOOL_FUNCTIONS = {
     "read_file": tool_read_file,
     "list_files": tool_list_files,
+    "query_api": tool_query_api,
 }
 
 
@@ -246,9 +385,14 @@ def execute_tool(tool_name: str, args: dict[str, Any]) -> str:
     func = TOOL_FUNCTIONS[tool_name]
     
     try:
-        # Extract path argument
-        path = args.get("path", "")
-        return func(path)
+        if tool_name == "query_api":
+            return func(
+                args.get("method", "GET"),
+                args.get("path", ""),
+                args.get("body"),
+            )
+        else:
+            return func(args.get("path", ""))
     except Exception as e:
         return f"Error executing {tool_name}: {e}"
 
@@ -270,7 +414,7 @@ async def call_llm(messages: list[dict], config: dict[str, str]) -> dict:
         "tools": TOOLS,
         "tool_choice": "auto",
         "temperature": 0.7,
-        "max_tokens": 1500,
+        "max_tokens": 2000,
     }
 
     print(f"Calling LLM at {url}...", file=sys.stderr)
@@ -315,13 +459,13 @@ async def run_agentic_loop(question: str, config: dict[str, str]) -> tuple[str, 
         assistant_message = response["choices"][0]["message"]
         
         # Check for tool calls
-        tool_calls = assistant_message.get("tool_calls", [])
+        tool_calls = assistant_message.get("tool_calls") or []
         
         if not tool_calls:
             # No tool calls - this is the final answer
-            answer = assistant_message.get("content", "")
+            answer = assistant_message.get("content") or ""
             
-            # Extract source from answer (look for wiki/... pattern)
+            # Extract source from answer (look for wiki/... or file patterns)
             source = extract_source(answer)
             
             print(f"Final answer found in iteration {iteration + 1}", file=sys.stderr)
@@ -374,14 +518,31 @@ def extract_source(answer: str) -> str:
     """
     Extract source reference from the answer.
     
-    Looks for patterns like wiki/filename.md or wiki/filename.md#section
+    Looks for patterns like wiki/filename.md, backend/...py, or API endpoints.
     """
     import re
     
     # Look for wiki file references
-    pattern = r'(wiki/[\w\-/]+\.md(?:#[\w\-]+)?)'
-    match = re.search(pattern, answer)
+    wiki_pattern = r'(wiki/[\w\-/]+\.md(?:#[\w\-]+)?)'
+    match = re.search(wiki_pattern, answer)
+    if match:
+        return match.group(1)
     
+    # Look for backend file references
+    backend_pattern = r'(backend/[\w\-/]+\.py)'
+    match = re.search(backend_pattern, answer)
+    if match:
+        return match.group(1)
+    
+    # Look for other file references
+    file_pattern = r'((?:docker-compose|Dockerfile|pyproject\.toml|\.env\.\w+))'
+    match = re.search(file_pattern, answer)
+    if match:
+        return match.group(1)
+    
+    # Look for API endpoint references
+    api_pattern = r'((?:GET|POST|PUT|DELETE)\s+/[\w\-/]+)'
+    match = re.search(api_pattern, answer)
     if match:
         return match.group(1)
     
