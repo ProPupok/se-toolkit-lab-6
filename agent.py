@@ -95,14 +95,10 @@ def is_placeholder_value(value: str) -> bool:
         return True
     placeholders = [
         "your-llm-api-key-here",
-        "your-vm-ip",
         "your-qwen-api-port",
         "your-api-key",
-        "<your-vm-ip>",
         "<your-qwen-api-port>",
-        "<vm-ip>",
         "<port>",
-        "your-llm-api-key-here",
     ]
     value_lower = value.lower().strip()
     return any(ph in value_lower for ph in placeholders)
